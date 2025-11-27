@@ -6,6 +6,9 @@ Scientific machine learning demands models that understand physical laws rather 
 ## Key Innovations and Model Structure
 ![Key Innovations and Model Structure](images/figure1/architecture_overview.png)
 
+## Molecular Property Prediction Performance
+![Molecular Property Prediction Performance](images/table1/prediction_performance.png)
+
 ## Usage
 ### Requirements
 The following versions of frameworks and libraries were used in this project:
