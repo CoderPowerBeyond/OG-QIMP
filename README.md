@@ -15,4 +15,4 @@ The following versions of frameworks and libraries were used in this project:
 - **DGL**: 1.1.3+cu117
 
 ### Run
-
+```python main.py```
