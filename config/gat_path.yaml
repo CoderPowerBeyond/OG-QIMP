@@ -1,33 +1,4 @@
-# LR: 0.0001
-# NUM_EPOCHS: 500
-# batch_size: 128
-# dropout: 0.0
-# encoder_atom: cgcnn
-# encoder_bond: dim_14
-# force_field: uff
-# grid: 4
-# head: 8
-# iter: 3
-# loss_select: bce
-# model_select: sdn
-# noise_std: 0.6
-# num_layers: 4
-# pooling: avg
-# select_dataset: bace
-# test_ratio: 0.1
-# train_ratio: 0.8
-# use_gaussian_noise: true
-# vali_ratio: 0.1
-# weight_decay: 1e-4
-
 model_select: "sdn"
-#mlp,mlp_two,kan_two,kan#GNN
-#kangat, gat, sdn
-#kantran, Transformer
-#mlpgat,
-#schnet, schnet_gat, schnet_orbital
-#dimenet, dimenet_plus
-#physics_reg_weight: 0.1  # DimeNet物理正则化权重
 select_dataset: 'bace'
 #bbbp, bace, clintox,sider,tox21,hiv,muv
 force_field: 'uff'
@@ -43,9 +14,9 @@ head: 2
 num_layers: 2
 #l1,l2,sml1,bce
 LR: 0.0001
-NUM_EPOCHS: 300
+NUM_EPOCHS: 500
 batch_size: 128
 train_ratio: 0.8
 vali_ratio: 0.1
 test_ratio: 0.1
-iter: 2
+iter: 5
