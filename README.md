@@ -6,12 +6,13 @@ Scientific machine learning demands models that understand physical laws rather 
 ## Key Innovations and Model Structure
 ![Key Innovations and Model Structure](images/figure1/architecture_overview.png)
 
-## How to Run
-### Versions
+## Usage
+### Requirements
 The following versions of frameworks and libraries were used in this project:
 
 - **PyTorch**: 2.0.0+cu117  
 - **CUDA**: 11.7  
 - **DGL**: 1.1.3+cu117
 
-###
+### Run
+
