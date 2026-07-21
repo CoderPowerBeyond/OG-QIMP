@@ -11,7 +11,7 @@ pooling: 'avg'
 loss_select: 'bce'
 grid: 3
 head: 2
-num_layers: 2
+num_layers: 12
 #l1,l2,sml1,bce
 LR: 0.0001
 NUM_EPOCHS: 500
