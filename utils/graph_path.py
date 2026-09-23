@@ -119,7 +119,7 @@ def tensor_nan_inf(per_bond_feat):
     
 
     
-def atom_to_graph(smiles,encoder_atom,encoder_bond):
+def atom_to_graph(smiles,encoder_atom,encoder_bond,real_overlap=False):
     
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
@@ -130,6 +130,7 @@ def atom_to_graph(smiles,encoder_atom,encoder_bond):
     coor = []
     edge_id = []
     atom_charges = []
+    symbols = []
     
     smiles_with_hydrogens = Chem.MolToSmiles(mol)
 
@@ -166,6 +167,7 @@ def atom_to_graph(smiles,encoder_atom,encoder_bond):
                     
                     pos = mol.GetConformer().GetAtomPosition(ii)
                     coor.append([pos.x, pos.y, pos.z])
+                    symbols.append(s.GetSymbol())
 
                     
                     charge = s.GetProp("_GasteigerCharge")
@@ -246,6 +248,25 @@ def atom_to_graph(smiles,encoder_atom,encoder_bond):
                 g.ndata['coor'] = coor_tensor  
                 g.edata['feat'] = edge_feats
                 g.edata['id'] = edge_id_feats
+
+                if real_overlap:
+                    from utils.real_overlap import molecule_overlap_channels
+
+                    # 边顺序就是 src_list/dst_list 的顺序，按构造对齐，不用事后查表
+                    # 形式电荷必须传：本数据集的 SMILES 多为质子化成盐形式，
+                    # 不传的话 pyscf 按中性算电子数，半数分子会 build 失败
+                    try:
+                        _orb = molecule_overlap_channels(
+                            symbols, coor, list(zip(src_list, dst_list)),
+                            charge=Chem.GetFormalCharge(mol))
+                    except Exception as exc:
+                        # 不静默兜底：算不出真实重叠却用 0 顶上，会把这个分子变成"没有物理信息"，
+                        # 结果没法解释。直接带上 SMILES 报错，让人看见。
+                        raise RuntimeError(
+                            f"real_overlap 计算失败 (smiles={smiles}): {exc}") from exc
+                    g.edata['orb_sigma'] = torch.tensor(_orb['sigma'], dtype=torch.float32)
+                    g.edata['orb_pi'] = torch.tensor(_orb['pi'], dtype=torch.float32)
+                    g.edata['orb_nonbonding'] = torch.tensor(_orb['nonbonding'], dtype=torch.float32)
                 #print("Updata G: min =", edge_feats.min().item(), ", max =", edge_feats.max().item())
         
             else:
@@ -258,9 +279,9 @@ def atom_to_graph(smiles,encoder_atom,encoder_bond):
 
 
 
-def path_complex_mol(Smile, encoder_atom,encoder_bond):
-    
-    g = atom_to_graph(Smile,encoder_atom,encoder_bond)
+def path_complex_mol(Smile, encoder_atom, encoder_bond, real_overlap=False):
+
+    g = atom_to_graph(Smile, encoder_atom, encoder_bond, real_overlap=real_overlap)
     
     if g != False:
         return g
