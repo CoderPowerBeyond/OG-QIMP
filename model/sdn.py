@@ -250,8 +250,13 @@ class HybridGNNBlock(nn.Module):
 
 class EnhancedOG_PGAT(nn.Module):
     def __init__(self, in_node_dim=78, in_edge_dim=12, hidden_dim=64,
-                 out_1=32, out_2=1, gride_size=16, num_layers=15, dropout=0.1):
+                 out_1=32, out_2=1, gride_size=16, num_layers=15, dropout=0.1,
+                 overlap_mode='heuristic', overlap_channels='three'):
         super().__init__()
+
+        # A/B 实验开关，默认值等于上游原行为（逐字节等价）
+        self.overlap_mode = overlap_mode
+        self.overlap_channels = overlap_channels
 
         self.node_features = in_node_dim
         self.edge_features = in_edge_dim
@@ -374,7 +379,23 @@ class EnhancedOG_PGAT(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    def compute_orbital_overlap_features(self, x, edge_index):
+    def compute_orbital_overlap_features(self, x, edge_index, data=None, source=None):
+        # source 显式指定时按它走，否则按 self.overlap_mode 推断；
+        # 力矩匹配臂需要同时拿到两边的原始值，所以要能强制走启发式。
+        if source is None:
+            source = 'real' if (self.overlap_mode in ('real', 'real_matched')
+                                and data is not None
+                                and getattr(data, 'orb_sigma', None) is not None) else 'heuristic'
+
+        # real 实验臂：图上带着 PySCF 算出的真实重叠，直接用它，不走下面的启发式
+        if source == 'real' and data is not None and getattr(data, 'orb_sigma', None) is not None:
+            device = x.device
+            return {
+                'sigma': data.orb_sigma.to(device).float(),
+                'pi': data.orb_pi.to(device).float(),
+                'nonbonding': data.orb_nonbonding.to(device).float(),
+            }
+
         num_edges = edge_index.size(1)
         device = x.device
 
@@ -394,6 +415,66 @@ class EnhancedOG_PGAT(nn.Module):
             'nonbonding': nonbonding
         }
 
+    def _log_overlap_stats(self, orbital_overlap, mode):
+        # 两个实验臂的通道量级必须可比，否则比的就不只是重叠来源。只看第一批，只打一次。
+        if getattr(self, '_overlap_logged', False):
+            return
+        self._overlap_logged = True
+        parts = []
+        n = 0
+        for name in ('sigma', 'pi', 'nonbonding'):
+            v = orbital_overlap[name].detach().float().flatten().cpu()
+            n = max(n, v.numel())
+            q = torch.quantile(v, torch.tensor([0.5, 0.9, 0.99]))
+            parts.append(
+                f"{name}: mean={v.mean():.4f} std={v.std():.4f} min={v.min():.4f} "
+                f"max={v.max():.4f} p50={q[0]:.4f} p90={q[1]:.4f} p99={q[2]:.4f}")
+        print(f"[overlap_stats] mode={mode} n={n} | " + " | ".join(parts), flush=True)
+
+    @staticmethod
+    def _match_moments(real, ref, eps=1e-6):
+        """把 real 逐通道仿射映射到 ref 的均值和标准差。
+
+        physics_weight 是裸加到 logits 上的，换来源会连偏置强度一起换掉，两臂就
+        没法比。匹配前两阶矩后两臂偏置的分布相同，剩下的差别只有"哪条边拿到什么值"。
+        没有方差的通道（实测真实重叠下 nonbonding 恒为 0）退化成常数，而常数加到
+        logits 上被 softmax 抵消，等于该通道不携带逐边信息。
+        """
+        r_std = real.std()
+        if r_std < eps:
+            # full_like 的 fill_value 必须是 Python 数字，传张量会 TypeError
+            return torch.full_like(real, ref.mean().item())
+        return (real - real.mean()) * (ref.std() / r_std) + ref.mean()
+
+    def _apply_overlap_mode(self, x, edge_index, data):
+        """按 self.overlap_mode / self.overlap_channels 组装送入 attention 的三通道。"""
+        mode = getattr(self, 'overlap_mode', 'heuristic')
+        if mode in ('real', 'real_matched'):
+            # 图上没有 orb_* 时 compute_...('real') 会静默落回启发式，
+            # real_matched 就变成启发式对自己做力矩匹配（恒等），跑出一个看似正常
+            # 其实全错的数。宁可直接报错。多半是 data/processed 里的缓存是别的模式建的。
+            if data is None or getattr(data, 'orb_sigma', None) is None:
+                raise RuntimeError(
+                    f"overlap_mode={mode} 需要图上带 orb_sigma/orb_pi/orb_nonbonding，"
+                    "但当前 batch 没有。缓存图可能是别的模式建的，删掉 data/processed 下的缓存重跑。")
+
+        if mode == 'none':
+            z = torch.zeros(edge_index.size(1), dtype=torch.float32, device=x.device)
+            out = {'sigma': z, 'pi': z.clone(), 'nonbonding': z.clone()}
+        elif mode == 'real_matched':
+            real = self.compute_orbital_overlap_features(x, edge_index, data, source='real')
+            ref = self.compute_orbital_overlap_features(x, edge_index, data, source='heuristic')
+            out = {k: self._match_moments(real[k], ref[k])
+                   for k in ('sigma', 'pi', 'nonbonding')}
+        else:
+            out = self.compute_orbital_overlap_features(x, edge_index, data)
+
+        if getattr(self, 'overlap_channels', 'three') == 'sigma_pi':
+            # 真实重叠下 nonbonding 恒为 0，拿它去比启发式里有信息的同通道没意义，
+            # 所以两臂一起置零（该头退化为纯数据驱动），比较只在 sigma/pi 上进行
+            out['nonbonding'] = torch.zeros_like(out['nonbonding'])
+        return out
+
     def forward(self, data, return_intermediate=False):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         edge_attr = getattr(data, 'edge_attr', None)
@@ -412,7 +493,11 @@ class EnhancedOG_PGAT(nn.Module):
         if edge_attr is not None and hasattr(self, 'edge_embedding'):
             edge_attr = self.edge_embedding(edge_attr)
 
-        orbital_overlap = self.compute_orbital_overlap_features(x, edge_index)
+        orbital_overlap = self._apply_overlap_mode(x, edge_index, data)
+        self._log_overlap_stats(
+            orbital_overlap,
+            f"{getattr(self, 'overlap_mode', 'heuristic')}"
+            f"/{getattr(self, 'overlap_channels', 'three')}")
 
         batch_size = batch.max().item() + 1
         virtual_node = self.virtual_node.expand(batch_size, -1)
