@@ -31,7 +31,6 @@ from sklearn import metrics
 
 # from model.ka_gat import KA_GAT
 # from model.kagcn import KA_GCN
-from model.gat import GAT
 from model.sdn import EnhancedOG_PGAT
 # from model.mlp_gat import MLP_GAT
 from torch.optim.lr_scheduler import StepLR
@@ -176,6 +175,7 @@ def creat_data(
     max_molecules=0,
     shuffle_seed=42,
     force_rebuild=False,
+    real_overlap=False,
 ):
 
     datasets = datafile
@@ -235,7 +235,8 @@ def creat_data(
 
             smiles = smiles_list[i]
 
-            Graph_list = path_complex_mol(smiles, encoder_atom, encoder_bond)
+            Graph_list = path_complex_mol(smiles, encoder_atom, encoder_bond,
+                                          real_overlap=real_overlap)
             if Graph_list == False:
                 continue
 
@@ -365,6 +366,10 @@ def train(model, device, train_loader, valid_loader, optimizer, epoch, loss_sele
                     pyg_kw["pos"] = graph_list.ndata["coor"][node_start:node_start + num_nodes].float()
                 if "z" in graph_list.ndata:
                     pyg_kw["z"] = graph_list.ndata["z"][node_start:node_start + num_nodes].long()
+                if "orb_sigma" in graph_list.edata:
+                    pyg_kw["orb_sigma"] = graph_list.edata["orb_sigma"][edge_start:edge_start + num_edges].float()
+                    pyg_kw["orb_pi"] = graph_list.edata["orb_pi"][edge_start:edge_start + num_edges].float()
+                    pyg_kw["orb_nonbonding"] = graph_list.edata["orb_nonbonding"][edge_start:edge_start + num_edges].float()
                 pyg_data = Data(**pyg_kw)
                 pyg_data_list.append(pyg_data)
 
@@ -451,6 +456,10 @@ def train(model, device, train_loader, valid_loader, optimizer, epoch, loss_sele
                     pyg_kw["pos"] = graph_list.ndata["coor"][node_start:node_start + num_nodes].float()
                 if "z" in graph_list.ndata:
                     pyg_kw["z"] = graph_list.ndata["z"][node_start:node_start + num_nodes].long()
+                if "orb_sigma" in graph_list.edata:
+                    pyg_kw["orb_sigma"] = graph_list.edata["orb_sigma"][edge_start:edge_start + num_edges].float()
+                    pyg_kw["orb_pi"] = graph_list.edata["orb_pi"][edge_start:edge_start + num_edges].float()
+                    pyg_kw["orb_nonbonding"] = graph_list.edata["orb_nonbonding"][edge_start:edge_start + num_edges].float()
                 pyg_data_list.append(Data(**pyg_kw))
                 node_start += num_nodes
                 edge_start += num_edges
@@ -543,6 +552,10 @@ def predicting(model, device, data_loader, loss_select='bce', model_select='sdn'
                         pyg_kw["pos"] = graph_list.ndata["coor"][node_start:node_start + num_nodes].float()
                     if "z" in graph_list.ndata:
                         pyg_kw["z"] = graph_list.ndata["z"][node_start:node_start + num_nodes].long()
+                    if "orb_sigma" in graph_list.edata:
+                        pyg_kw["orb_sigma"] = graph_list.edata["orb_sigma"][edge_start:edge_start + num_edges].float()
+                        pyg_kw["orb_pi"] = graph_list.edata["orb_pi"][edge_start:edge_start + num_edges].float()
+                        pyg_kw["orb_nonbonding"] = graph_list.edata["orb_nonbonding"][edge_start:edge_start + num_edges].float()
                     pyg_data_list.append(Data(**pyg_kw))
                     node_start += num_nodes
                     edge_start += num_edges
@@ -686,6 +699,16 @@ if __name__ == '__main__':
 
     max_molecules = int(getattr(args, "max_molecules", 0) or 0)
     force_rebuild_data = bool(getattr(args, "force_rebuild_data", False))
+    overlap_mode = str(getattr(args, "overlap_mode", "heuristic")).strip().lower()
+    if overlap_mode not in ("heuristic", "real", "real_matched", "none"):
+        raise ValueError(
+            "overlap_mode 只能是 heuristic / real / real_matched / none，"
+            f"收到 {overlap_mode!r}")
+    overlap_channels = str(getattr(args, "overlap_channels", "three")).strip().lower()
+    if overlap_channels not in ("three", "sigma_pi"):
+        raise ValueError(
+            f"overlap_channels 只能是 three 或 sigma_pi，收到 {overlap_channels!r}")
+    print(f"overlap_mode: {overlap_mode} / channels: {overlap_channels}")
     creat_data(
         datafile,
         encoder_atom,
@@ -697,6 +720,7 @@ if __name__ == '__main__':
         max_molecules=max_molecules,
         shuffle_seed=42,
         force_rebuild=force_rebuild_data,
+        real_overlap=(overlap_mode in ("real", "real_matched")),
     )
 
     model_select = str(args.model_select).lower().replace("-", "_")
@@ -760,7 +784,7 @@ if __name__ == '__main__':
     pooling = args.pooling
 
     All_AUC = []
-    seed = 42
+    seed = 2026
     set_seed(seed)
 
     for i in range(iter):
@@ -806,6 +830,8 @@ if __name__ == '__main__':
                 out_1=32,
                 out_2=target_dim,
                 num_layers=num_layers,
+                overlap_mode=overlap_mode,
+                overlap_channels=overlap_channels,
             )
 
         elif model_select =='kangat':
