@@ -2,6 +2,8 @@ model_select: "sdn"
 select_dataset: 'bace'
 #bbbp, bace, clintox,sider,tox21,hiv,muv
 force_field: 'uff'
+overlap_mode: 'heuristic'
+overlap_channels: 'sigma_pi'
 
 encoder_atom: "cgcnn"
 #encoder_method = ("atomic_number":1, "basic":11, "cfid":438, "cgcnn":92,'self':62,'gme':140)
